@@ -293,6 +293,100 @@ function CatRom:SolveUniformLength(a: number?, b: number?)
 	return lengthA + intermediateLengths + lengthB
 end
 
+function CatRom:ComputeMinRotationFrames(pointCount: number)
+	assert(pointCount >= 2, "Must generate at least two points!")
+	return self:_computeMinRotationFrames(
+		pointCount,
+		CatRom.SolvePosition,
+		CatRom.SolveNormal,
+		CatRom.SolveTangent,
+		CatRom.SolveBinormal
+	)
+end
+
+function CatRom:ComputeUniformMinRotationFrames(pointCount: number)
+	assert(pointCount >= 2, "Must generate at least two points!")
+	return self:_computeMinRotationFrames(
+		pointCount,
+		CatRom.SolveUniformPosition,
+		CatRom.SolveUniformNormal,
+		CatRom.SolveUniformTangent,
+		CatRom.SolveUniformBinormal
+	)
+end
+
+function CatRom:_computeMinRotationFrames(pointCount: number, _pos,  _norm, _tan, _binorm)
+	--! Curently this is broken for straight lines!
+	-- When two points on the curve are in a straight line, x(i+1) - x(i) == t(i).
+	-- This means that t(i):Dot(x(i+1)-x(i)) will fail, returning nan.
+	-- This breaks the calculations. Not sure how to fix it?
+
+	-- Note that asserts are placed in the calling functions for stack trace purposes.
+
+	-- Utility functions.
+	-- Redefining these every function call is wasteful!!
+	-- They are used for brevity, and follow the pseudocode in this paper:
+	-- https://www.microsoft.com/en-us/research/wp-content/uploads/2016/12/Computation-of-rotation-minimizing-frames.pdf
+	-- Note that functions may be inlined in the production / online Roblox player.
+	-- i.e. 'toCFrame' is guaranteed to be inlined.
+	local function x(fac): Vector3
+		return _pos(self, fac)
+	end
+	local function r(fac): Vector3
+		return _norm(self, fac)
+	end
+	local function t(fac): Vector3
+		return _tan(self, fac)
+	end
+	local function s(fac): Vector3
+		return _binorm(self, fac)
+	end
+	local function toCFrame(pV, uV, lV, rV)
+		-- Note that this will flip the lookVector.
+		return CFrame.new(pV.X, pV.Y, pV.Z, rV.X, uV.X, -lV.X, rV.Y, uV.Y, -lV.Y, rV.Z, uV.Z, -lV.Z):Orthonormalize()
+	end
+
+	local pointArray = table.create(pointCount)
+
+	local ri = r(0)
+	local si = s(0)
+
+	for i = 0, pointCount - 2 do
+		-- Everything to compute point i.
+		local _i = i / (pointCount - 1)
+		local xi = x(_i)
+		local ti = t(_i)
+		pointArray[i + 1] = toCFrame(xi, ri, ti, si)
+
+		-- Everything to compute the next point, i+1.
+		-- As we want n points, we should only compute n-1 next points.
+		-- Therefore we skip this on the last iteration.
+		local _i1 = (i+1) / (pointCount-1)
+		local xi1 = x(_i1)
+		local ti1 = t(_i1)
+
+		-- From the paper.
+		local v1 = xi1 - xi
+
+		local c1 = v1:Dot(v1)
+		local rLi = ri - (2 / c1) * (v1:Dot(ri)) * v1
+		local tLi = ti - (2 / c1) * (v1:Dot(ti)) * v1
+
+		local v2 = ti1 - tLi
+		local c2 = v2:Dot(v2)
+
+		local rNext = rLi - (2 / c2) * (v2:Dot(rLi)) * v2
+		local sNext = ti1:Cross(rNext)
+
+		ri = rNext
+		si = sNext
+	end
+
+	pointArray[pointCount] = toCFrame(x(1), ri, t(1), si)
+
+	return pointArray
+end
+
 ---- START GENERATED METHODS
 function CatRom:SolvePosition(t: number)
 	local spline, splineT = self:GetSplineFromT(t)
